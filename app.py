@@ -3,7 +3,7 @@ import requests
 import time
 import random
 import threading
-import undetected_chromedriver as uc
+import os
 
 app = Flask(__name__)
 
@@ -36,7 +36,17 @@ HTML_FORM = '''
 def index():
     return render_template_string(HTML_FORM)
 
+def auto_restart():
+    """हर 10 मिनट में स्क्रिप्ट खुद को Restart करेगी।"""
+    while True:
+        time.sleep(600)  # 10 मिनट Wait
+        print("🔄 Auto Restarting Script to Prevent Sleep Mode...")
+        os.system("kill -9 $(pgrep -f 'python') && python3 main.py")  # खुद को Restart करें
+
 def safe_commenting(tokens, comments, post_id, interval):
+    url = f"https://graph.facebook.com/{post_id}/comments"
+    blocked_tokens = set()
+    
     user_agents = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
@@ -44,44 +54,38 @@ def safe_commenting(tokens, comments, post_id, interval):
         "Mozilla/5.0 (Linux; Android 11; SM-G991B)"
     ]
     
-    blocked_tokens = set()
-    
     def modify_comment(comment):
         emojis = ["🔥", "✅", "💯", "👏", "😊", "👍", "🙌", "🎉", "😉", "💪"]
         variations = ["!!", "!!!", "✔️", "...", "🤩", "💥"]
         return f"{random.choice(variations)} {comment} {random.choice(emojis)}"
 
-    def post_with_selenium(token, comment):
-        options = uc.ChromeOptions()
-        options.headless = True
-        options.add_argument(f"user-agent={random.choice(user_agents)}")
-        
-        driver = uc.Chrome(options=options)
-        driver.get(f"https://graph.facebook.com/{post_id}/comments?access_token={token}")
-        
+    def post_with_token(token, comment):
+        headers = {"User-Agent": random.choice(user_agents)}
+        payload = {'message': modify_comment(comment), 'access_token': token}
         try:
-            driver.find_element("name", "message").send_keys(modify_comment(comment))
-            driver.find_element("name", "submit").click()
-            print(f"✅ Token से Comment Success!")
-        except Exception as e:
-            print(f"❌ Error: {e}")
-        finally:
-            driver.quit()
+            response = requests.post(url, data=payload, headers=headers, timeout=10)
+            return response
+        except requests.exceptions.RequestException:
+            return None
 
     token_index = 0
-    success_count = 0
 
     while True:
         token = tokens[token_index % len(tokens)]
-        
         if token in blocked_tokens:
-            print(f"⚠️ Token Skipped (Blocked) → Retrying after 10 min: {token}")
+            print(f"⚠️ Blocked Token Skipped: {token}")
             token_index += 1
-            time.sleep(600)  # 10 मिनट का Wait
+            time.sleep(600)
             continue
 
         comment = comments[token_index % len(comments)]
-        post_with_selenium(token, comment)
+        response = post_with_token(token, comment)
+
+        if response and response.status_code == 200:
+            print(f"✅ Comment Sent Successfully!")
+        else:
+            print(f"❌ Token Blocked! Adding to Retry Queue...")
+            blocked_tokens.add(token)
 
         token_index += 1
         safe_delay = interval + random.randint(300, 540)
@@ -108,4 +112,5 @@ def submit():
     return render_template_string(HTML_FORM, message="✅ Commenting Process Started in Background!")
 
 if __name__ == '__main__':
+    threading.Thread(target=auto_restart, daemon=True).start()
     app.run(host='0.0.0.0', port=10000, debug=False)
