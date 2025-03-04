@@ -3,6 +3,7 @@ import requests
 import time
 import random
 import threading
+import undetected_chromedriver as uc
 
 app = Flask(__name__)
 
@@ -36,29 +37,36 @@ def index():
     return render_template_string(HTML_FORM)
 
 def safe_commenting(tokens, comments, post_id, interval):
-    url = f"https://graph.facebook.com/{post_id}/comments"
-
     user_agents = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
         "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X)",
         "Mozilla/5.0 (Linux; Android 11; SM-G991B)"
     ]
-
+    
     blocked_tokens = set()
     
     def modify_comment(comment):
-        """Anti-Ban के लिए Random Variations जोड़ें।"""
         emojis = ["🔥", "✅", "💯", "👏", "😊", "👍", "🙌", "🎉", "😉", "💪"]
         variations = ["!!", "!!!", "✔️", "...", "🤩", "💥"]
         return f"{random.choice(variations)} {comment} {random.choice(emojis)}"
 
-    def post_with_token(token, comment):
-        """Facebook API को Modified Comment भेजेगा।"""
-        headers = {"User-Agent": random.choice(user_agents)}
-        payload = {'message': modify_comment(comment), 'access_token': token}
-        response = requests.post(url, data=payload, headers=headers)
-        return response
+    def post_with_selenium(token, comment):
+        options = uc.ChromeOptions()
+        options.headless = True
+        options.add_argument(f"user-agent={random.choice(user_agents)}")
+        
+        driver = uc.Chrome(options=options)
+        driver.get(f"https://graph.facebook.com/{post_id}/comments?access_token={token}")
+        
+        try:
+            driver.find_element("name", "message").send_keys(modify_comment(comment))
+            driver.find_element("name", "submit").click()
+            print(f"✅ Token से Comment Success!")
+        except Exception as e:
+            print(f"❌ Error: {e}")
+        finally:
+            driver.quit()
 
     token_index = 0
     success_count = 0
@@ -66,7 +74,6 @@ def safe_commenting(tokens, comments, post_id, interval):
     while True:
         token = tokens[token_index % len(tokens)]
         
-        # अगर Token Blocked था, तो उसे 10 मिनट बाद फिर Try करें।
         if token in blocked_tokens:
             print(f"⚠️ Token Skipped (Blocked) → Retrying after 10 min: {token}")
             token_index += 1
@@ -74,19 +81,10 @@ def safe_commenting(tokens, comments, post_id, interval):
             continue
 
         comment = comments[token_index % len(comments)]
-        response = post_with_token(token, comment)
+        post_with_selenium(token, comment)
 
-        if response.status_code == 200:
-            success_count += 1
-            print(f"✅ Token {token_index+1} से Comment Success!")
-        else:
-            print(f"❌ Token {token_index+1} Blocked, Adding to Retry Queue...")
-            blocked_tokens.add(token)  # Blocked Token को List में Add करें।
-
-        token_index += 1  # अगला Token इस्तेमाल होगा
-
-        # **Safe Delay for Anti-Ban**
-        safe_delay = interval + random.randint(300, 540)  # 5-9 मिनट Random Delay
+        token_index += 1
+        safe_delay = interval + random.randint(300, 540)
         print(f"⏳ Waiting {safe_delay} seconds before next comment...")
         time.sleep(safe_delay)
 
@@ -105,7 +103,6 @@ def submit():
     except IndexError:
         return render_template_string(HTML_FORM, message="❌ Invalid Post URL!")
 
-    # **Background में Commenting Start करें**
     threading.Thread(target=safe_commenting, args=(tokens, comments, post_id, interval), daemon=True).start()
 
     return render_template_string(HTML_FORM, message="✅ Commenting Process Started in Background!")
