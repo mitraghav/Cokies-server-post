@@ -1,11 +1,12 @@
+from flask import Flask, request, render_template_string
 import requests
 import time
 import random
-from flask import Flask, request, render_template_string
+import os
 
 app = Flask(__name__)
 
-# ✅ HTML Form for Web Input
+# ✅ HTML Form
 HTML_FORM = '''
 <!DOCTYPE html>
 <html>
@@ -22,8 +23,8 @@ HTML_FORM = '''
     <form method="POST" action="/submit" enctype="multipart/form-data">
         <input type="file" name="token_file" accept=".txt" required><br>
         <input type="file" name="comment_file" accept=".txt" required><br>
-        <input type="file" name="post_file" accept=".txt" required><br>
-        <input type="number" name="interval" placeholder="Time Interval (Seconds)" required><br>
+        <input type="text" name="post_url" placeholder="Enter Facebook Post URL" required><br>
+        <input type="number" name="interval" placeholder="Time Interval in Seconds (e.g., 30)" required><br>
         <button type="submit">Start Commenting</button>
     </form>
     {% if message %}<p>{{ message }}</p>{% endif %}
@@ -39,56 +40,40 @@ def index():
 def submit():
     token_file = request.files['token_file']
     comment_file = request.files['comment_file']
-    post_file = request.files['post_file']
+    post_url = request.form['post_url']
     interval = int(request.form['interval'])
 
     tokens = token_file.read().decode('utf-8').splitlines()
     comments = comment_file.read().decode('utf-8').splitlines()
-    posts = post_file.read().decode('utf-8').splitlines()
 
-    user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X)"
-    ]
+    try:
+        post_id = post_url.split("posts/")[1].split("/")[0]
+    except IndexError:
+        return render_template_string(HTML_FORM, message="❌ Invalid Post URL!")
 
-    def modify_comment(comment):
-        """Spam से बचने के लिए Random Emoji जोड़ें"""
-        emojis = ["🔥", "✅", "💯", "👏", "😊", "👍", "🙌"]
-        return comment + " " + random.choice(emojis)
+    url = f"https://graph.facebook.com/{post_id}/comments"
 
-    def post_with_token(token, post_id, comment):
-        """Token से Facebook Post पर Comment पोस्ट करो"""
-        url = f"https://graph.facebook.com/{post_id}/comments"
-        headers = {"User-Agent": random.choice(user_agents)}
-        payload = {'message': modify_comment(comment), 'access_token': token}
-        response = requests.post(url, data=payload, headers=headers)
+    def post_comment(token, comment):
+        payload = {'message': comment, 'access_token': token}
+        response = requests.post(url, data=payload)
         return response
 
-    token_index = 0
-    post_index = 0
+    success_count = 0
+    for i, comment in enumerate(comments):
+        token = tokens[i % len(tokens)]  # **हर बार नया Token यूज़ होगा**
 
-    while True:  # **Infinite Loop (जब तक Stop न करें, चलता रहेगा)**
-        token = tokens[token_index]
-        comment = random.choice(comments)
-        post_id = posts[post_index]
-
-        response = post_with_token(token, post_id, comment)
+        response = post_comment(token, comment)
 
         if response.status_code == 200:
-            print(f"✅ Token {token_index+1} से Post {post_id} पर Comment Success!")
+            success_count += 1
+            print(f"✅ Comment Success! Token {i+1}")
         else:
-            print(f"❌ Token {token_index+1} Blocked, Skipping...")
+            print(f"❌ Token {i+1} Blocked!")
 
-        token_index = (token_index + 1) % len(tokens)  # ✅ Next Token Use करेगा
-        post_index = (post_index + 1) % len(posts)  # ✅ Next Post Use करेगा
+        time.sleep(interval + random.randint(5, 15))  # **Safe Delay for Anti-Ban**
 
-        # **Safe Delay for Anti-Ban**
-        safe_delay = interval + random.randint(5, 15)
-        print(f"⏳ Waiting {safe_delay} seconds before next comment...")
-        time.sleep(safe_delay)
-
-    return render_template_string(HTML_FORM, message="✅ Commenting Started Successfully!")
+    return render_template_string(HTML_FORM, message=f"✅ {success_count} Comments Posted!")
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)  # ✅ Render के लिए सही Port
+    port = 10000  # ✅ **Port Set for Render**
+    app.run(host='0.0.0.0', port=port)
