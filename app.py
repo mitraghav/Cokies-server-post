@@ -1,16 +1,16 @@
-from flask import Flask, request, render_template_string
 import requests
 import time
-import threading
 import random
+from flask import Flask, request, render_template_string
 
 app = Flask(__name__)
 
+# ✅ HTML Form for Web Input
 HTML_FORM = '''
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Facebook Auto Comment - Anti-Ban</title>
+    <title>Facebook Auto Comment</title>
     <style>
         body { background-color: black; color: white; text-align: center; font-family: Arial, sans-serif; }
         input, button { width: 300px; padding: 10px; margin: 5px; border-radius: 5px; }
@@ -18,13 +18,13 @@ HTML_FORM = '''
     </style>
 </head>
 <body>
-    <h1>Facebook Auto Comment - Anti-Ban</h1>
+    <h1>Facebook Auto Comment</h1>
     <form method="POST" action="/submit" enctype="multipart/form-data">
         <input type="file" name="token_file" accept=".txt" required><br>
         <input type="file" name="comment_file" accept=".txt" required><br>
         <input type="text" name="post_url" placeholder="Enter Facebook Post URL" required><br>
-        <input type="number" name="interval" placeholder="Set Time Interval (Seconds)" required><br>
-        <button type="submit">Start Safe Commenting</button>
+        <input type="number" name="interval" placeholder="Time Interval (Seconds)" required><br>
+        <button type="submit">Start Commenting</button>
     </form>
     {% if message %}<p>{{ message }}</p>{% endif %}
 </body>
@@ -34,67 +34,6 @@ HTML_FORM = '''
 @app.route('/')
 def index():
     return render_template_string(HTML_FORM)
-
-def keep_alive():
-    """हर 5 मिनट में Server को जिंदा रखने के लिए एक Dummy Request भेजें"""
-    while True:
-        time.sleep(300)  # 5 मिनट Wait
-        try:
-            requests.get("https://your-deployed-url.onrender.com")
-            print("🔄 Keeping Server Alive!")
-        except:
-            print("🚨 Keep Alive Failed!")
-
-threading.Thread(target=keep_alive, daemon=True).start()
-
-def anti_ban_commenting(tokens, comments, post_id, interval):
-    url = f"https://graph.facebook.com/{post_id}/comments"
-    blocked_tokens = set()
-    retry_tokens = {}
-
-    user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X)",
-        "Mozilla/5.0 (Linux; Android 11; SM-G991B)"
-    ]
-
-    def modify_comment(comment):
-        emojis = ["🔥", "✅", "💯", "👏", "😊", "👍", "🙌", "🎉", "😉", "💪"]
-        variations = ["!!", "!!!", "✔️", "...", "🤩", "💥"]
-        return f"{random.choice(variations)} {comment} {random.choice(emojis)}"
-
-    def post_with_token(token, comment):
-        headers = {"User-Agent": random.choice(user_agents)}
-        payload = {'message': modify_comment(comment), 'access_token': token}
-        try:
-            response = requests.post(url, data=payload, headers=headers, timeout=10)
-            return response
-        except requests.exceptions.RequestException:
-            return None
-
-    while True:
-        for token in tokens:
-            if token in blocked_tokens:
-                if time.time() - retry_tokens[token] > 1800:  # 30 मिनट बाद फिर Try करेगा
-                    blocked_tokens.remove(token)
-                    print(f"🔄 Retrying Blocked Token: {token}")
-                else:
-                    continue
-
-            comment = random.choice(comments)
-            response = post_with_token(token, comment)
-
-            if response and response.status_code == 200:
-                print(f"✅ Comment Sent Successfully!")
-            else:
-                print(f"❌ Token Blocked! Will Retry in 30 Minutes...")
-                blocked_tokens.add(token)
-                retry_tokens[token] = time.time()
-
-            safe_delay = interval + random.randint(500, 900)  # Random Delay 8-15 मिनट (Safe Anti-Ban)
-            print(f"⏳ Waiting {safe_delay} seconds before next comment...")
-            time.sleep(safe_delay)
 
 @app.route('/submit', methods=['POST'])
 def submit():
@@ -111,9 +50,46 @@ def submit():
     except IndexError:
         return render_template_string(HTML_FORM, message="❌ Invalid Post URL!")
 
-    threading.Thread(target=anti_ban_commenting, args=(tokens, comments, post_id, interval), daemon=True).start()
+    url = f"https://graph.facebook.com/{post_id}/comments"
+    success_count = 0
 
-    return render_template_string(HTML_FORM, message="✅ Anti-Ban Commenting Started in Background!")
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X)"
+    ]
+
+    def modify_comment(comment):
+        """Spam से बचने के लिए Comment में Random Emoji जोड़ें"""
+        emojis = ["🔥", "✅", "💯", "👏", "😊", "👍", "🙌"]
+        return comment + " " + random.choice(emojis)
+
+    def post_with_token(token, comment):
+        """Token से Facebook पर Comment पोस्ट करो"""
+        headers = {"User-Agent": random.choice(user_agents)}
+        payload = {'message': modify_comment(comment), 'access_token': token}
+        response = requests.post(url, data=payload, headers=headers)
+        return response
+
+    for i in range(len(comments)):  # **हर Token से एक-एक करके Comment करेगा**
+        token_index = i % len(tokens)  # **Round-Robin तरीके से Token Use करेगा**
+        token = tokens[token_index]
+        comment = comments[i]  # **एक नया Comment लेगा**
+
+        response = post_with_token(token, comment)
+
+        if response.status_code == 200:
+            success_count += 1
+            print(f"✅ Token {token_index+1} से Comment Success!")
+        else:
+            print(f"❌ Token {token_index+1} Blocked, Skipping...")
+
+        # **Safe Delay for Anti-Ban**
+        safe_delay = interval + random.randint(5, 15)
+        print(f"⏳ Waiting {safe_delay} seconds before next comment...")
+        time.sleep(safe_delay)
+
+    return render_template_string(HTML_FORM, message=f"✅ {success_count} Comments Successfully Posted!")
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000, debug=False, threaded=True)
+    app.run(host='0.0.0.0', port=10000)  # ✅ Corrected Port (10000)
