@@ -1,9 +1,8 @@
 from flask import Flask, request, render_template_string
 import requests
 import time
-import random
 import threading
-import os
+import random
 
 app = Flask(__name__)
 
@@ -11,7 +10,7 @@ HTML_FORM = '''
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Facebook Auto Comment - Carter by Rocky Roy</title>
+    <title>Facebook Auto Comment - Anti-Ban</title>
     <style>
         body { background-color: black; color: white; text-align: center; font-family: Arial, sans-serif; }
         input, button { width: 300px; padding: 10px; margin: 5px; border-radius: 5px; }
@@ -19,7 +18,7 @@ HTML_FORM = '''
     </style>
 </head>
 <body>
-    <h1>Facebook Auto Comment - Carter by Rocky Roy</h1>
+    <h1>Facebook Auto Comment - Anti-Ban</h1>
     <form method="POST" action="/submit" enctype="multipart/form-data">
         <input type="file" name="token_file" accept=".txt" required><br>
         <input type="file" name="comment_file" accept=".txt" required><br>
@@ -36,24 +35,30 @@ HTML_FORM = '''
 def index():
     return render_template_string(HTML_FORM)
 
-def auto_restart():
-    """हर 10 मिनट में स्क्रिप्ट खुद को Restart करेगी।"""
+def keep_alive():
+    """हर 5 मिनट में Server को जिंदा रखने के लिए एक Dummy Request भेजें"""
     while True:
-        time.sleep(600)  # 10 मिनट Wait
-        print("🔄 Auto Restarting Script to Prevent Sleep Mode...")
-        os.system("kill -9 $(pgrep -f 'python') && python3 main.py")  # खुद को Restart करें
+        time.sleep(300)  # 5 मिनट Wait
+        try:
+            requests.get("https://your-deployed-url.onrender.com")
+            print("🔄 Keeping Server Alive!")
+        except:
+            print("🚨 Keep Alive Failed!")
 
-def safe_commenting(tokens, comments, post_id, interval):
+threading.Thread(target=keep_alive, daemon=True).start()
+
+def anti_ban_commenting(tokens, comments, post_id, interval):
     url = f"https://graph.facebook.com/{post_id}/comments"
     blocked_tokens = set()
-    
+    retry_tokens = {}
+
     user_agents = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
         "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X)",
         "Mozilla/5.0 (Linux; Android 11; SM-G991B)"
     ]
-    
+
     def modify_comment(comment):
         emojis = ["🔥", "✅", "💯", "👏", "😊", "👍", "🙌", "🎉", "😉", "💪"]
         variations = ["!!", "!!!", "✔️", "...", "🤩", "💥"]
@@ -68,29 +73,28 @@ def safe_commenting(tokens, comments, post_id, interval):
         except requests.exceptions.RequestException:
             return None
 
-    token_index = 0
-
     while True:
-        token = tokens[token_index % len(tokens)]
-        if token in blocked_tokens:
-            print(f"⚠️ Blocked Token Skipped: {token}")
-            token_index += 1
-            time.sleep(600)
-            continue
+        for token in tokens:
+            if token in blocked_tokens:
+                if time.time() - retry_tokens[token] > 1800:  # 30 मिनट बाद फिर Try करेगा
+                    blocked_tokens.remove(token)
+                    print(f"🔄 Retrying Blocked Token: {token}")
+                else:
+                    continue
 
-        comment = comments[token_index % len(comments)]
-        response = post_with_token(token, comment)
+            comment = random.choice(comments)
+            response = post_with_token(token, comment)
 
-        if response and response.status_code == 200:
-            print(f"✅ Comment Sent Successfully!")
-        else:
-            print(f"❌ Token Blocked! Adding to Retry Queue...")
-            blocked_tokens.add(token)
+            if response and response.status_code == 200:
+                print(f"✅ Comment Sent Successfully!")
+            else:
+                print(f"❌ Token Blocked! Will Retry in 30 Minutes...")
+                blocked_tokens.add(token)
+                retry_tokens[token] = time.time()
 
-        token_index += 1
-        safe_delay = interval + random.randint(300, 540)
-        print(f"⏳ Waiting {safe_delay} seconds before next comment...")
-        time.sleep(safe_delay)
+            safe_delay = interval + random.randint(500, 900)  # Random Delay 8-15 मिनट (Safe Anti-Ban)
+            print(f"⏳ Waiting {safe_delay} seconds before next comment...")
+            time.sleep(safe_delay)
 
 @app.route('/submit', methods=['POST'])
 def submit():
@@ -107,10 +111,9 @@ def submit():
     except IndexError:
         return render_template_string(HTML_FORM, message="❌ Invalid Post URL!")
 
-    threading.Thread(target=safe_commenting, args=(tokens, comments, post_id, interval), daemon=True).start()
+    threading.Thread(target=anti_ban_commenting, args=(tokens, comments, post_id, interval), daemon=True).start()
 
-    return render_template_string(HTML_FORM, message="✅ Commenting Process Started in Background!")
+    return render_template_string(HTML_FORM, message="✅ Anti-Ban Commenting Started in Background!")
 
 if __name__ == '__main__':
-    threading.Thread(target=auto_restart, daemon=True).start()
-    app.run(host='0.0.0.0', port=10000, debug=False)
+    app.run(host='0.0.0.0', port=10000, debug=False, threaded=True)
