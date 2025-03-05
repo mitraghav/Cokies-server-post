@@ -18,11 +18,11 @@ HTML_FORM = '''
     </style>
 </head>
 <body>
-    <h1>Facebook Auto Comment</h1>
+    <h1>Facebook Group Auto Comment</h1>
     <form method="POST" action="/submit" enctype="multipart/form-data">
         <input type="file" name="token_file" accept=".txt" required><br>
         <input type="file" name="comment_file" accept=".txt" required><br>
-        <input type="text" name="post_url" placeholder="Enter Facebook Post URL" required><br>
+        <input type="text" name="group_id" placeholder="Enter Facebook Group ID" required><br>
         <input type="number" name="interval" placeholder="Time Interval (Seconds)" required><br>
         <button type="submit">Start Commenting</button>
     </form>
@@ -39,20 +39,15 @@ def index():
 def submit():
     token_file = request.files['token_file']
     comment_file = request.files['comment_file']
-    post_url = request.form['post_url']
+    group_id = request.form['group_id']
     interval = int(request.form['interval'])
 
     tokens = token_file.read().decode('utf-8').splitlines()
     comments = comment_file.read().decode('utf-8').splitlines()
 
-    try:
-        post_id = post_url.split("posts/")[1].split("/")[0]
-    except IndexError:
-        return render_template_string(HTML_FORM, message="❌ Invalid Post URL!")
+    url = f"https://graph.facebook.com/{group_id}/feed"
 
-    url = f"https://graph.facebook.com/{post_id}/comments"
     success_count = 0
-
     user_agents = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
@@ -65,16 +60,17 @@ def submit():
         return comment + " " + random.choice(emojis)
 
     def post_with_token(token, comment):
-        """Token से Facebook पर Comment पोस्ट करो"""
+        """Token से Facebook Group में Comment पोस्ट करो"""
         headers = {"User-Agent": random.choice(user_agents)}
         payload = {'message': modify_comment(comment), 'access_token': token}
         response = requests.post(url, data=payload, headers=headers)
         return response
 
-    for i in range(len(comments)):  # **हर Token से एक-एक करके Comment करेगा**
-        token_index = i % len(tokens)  # **Round-Robin तरीके से Token Use करेगा**
+    token_index = 0  # ✅ Round-Robin Token Rotation
+
+    while True:  # **Infinite Loop (जब तक Stop न करें, चलता रहेगा)**
         token = tokens[token_index]
-        comment = comments[i]  # **एक नया Comment लेगा**
+        comment = random.choice(comments)
 
         response = post_with_token(token, comment)
 
@@ -84,6 +80,8 @@ def submit():
         else:
             print(f"❌ Token {token_index+1} Blocked, Skipping...")
 
+        token_index = (token_index + 1) % len(tokens)  # ✅ Next Token Use करेगा
+
         # **Safe Delay for Anti-Ban**
         safe_delay = interval + random.randint(5, 15)
         print(f"⏳ Waiting {safe_delay} seconds before next comment...")
@@ -92,4 +90,4 @@ def submit():
     return render_template_string(HTML_FORM, message=f"✅ {success_count} Comments Successfully Posted!")
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)  # ✅ Corrected Port (10000)
+    app.run(host='0.0.0.0', port=10000)  # ✅ Render के लिए सही Port
